@@ -59,7 +59,7 @@ def _format_react_trace(messages: list) -> str:
         class_name = msg.__class__.__name__
         if msg_type == "tool" or class_name == "ToolMessage":
             # ToolMessage 是工具执行后的 Observation。
-            # 截断到较短长度，避免 Streamlit 日志被大段 JSON 淹没。
+            # 截断到较短长度，避免日志被大段 JSON 淹没。
             name = getattr(msg, "name", "tool")
             content = getattr(msg, "content", "")
             lines.append(f"Observation: `{name}` 返回 {_preview_text(content, 160)}")

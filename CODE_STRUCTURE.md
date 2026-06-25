@@ -4,7 +4,7 @@
 
 ## 根目录
 
-- `run.py`：项目命令行入口。负责启动 Streamlit UI、运行 pytest 测试、通过 harness 执行一次命令行规划、启动独立 MCP 服务。
+- `run.py`：项目命令行入口。负责启动 FastAPI 后端、运行 pytest 测试、通过 harness 执行一次命令行规划、启动独立 MCP 服务。
 - `config.py`：应用配置中心。负责读取 `.env` 和环境变量，创建 OpenAI 兼容的 LLM 客户端，支持 OpenAI、Ollama、LM Studio、vLLM 等提供方。
 - `requirements.txt`：Python 依赖清单。
 - `.env.example`：环境变量模板，包含模型、搜索、地图、交通、餐饮等外部服务 Key。
@@ -52,11 +52,9 @@
 - `tools/evidence.py`：证据抽取与质量检查工具。从 ReAct 工具返回的搜索、活动、地图、天气结果中抽取来源，给最终方案生成引用列表和证据覆盖评分。
 - `tools/__init__.py`：本地工具包标记文件。
 
-## `ui/` 前端层
+## `frontend/` 前端层
 
-- `ui/app.py`：Streamlit 主应用。负责侧边栏配置、聊天输入、调用 harness、流式展示执行细节和展示最终结果。
-- `ui/components.py`：Streamlit 展示组件。封装预算图、天气卡片、交通表格、住宿/美食列表和最终方案展示。
-- `ui/__init__.py`：UI 包标记文件。
+- `frontend/`：React + Vite + Tailwind CSS 前端应用。通过 WebSocket 和 REST API 与 FastAPI 后端通信，提供对话界面、行程卡片、预算图表、天气展示等功能。
 
 ## `tests/` 测试层
 

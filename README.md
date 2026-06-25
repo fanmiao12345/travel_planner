@@ -1,16 +1,17 @@
 # 🌍 出游计划自动规划多智能体平台
 
-基于 **Harness + LangGraph + MCP + Streamlit** 构建的出游计划自动规划系统，覆盖多智能体协作核心知识点。
+基于 **Harness + LangGraph + MCP + FastAPI + React** 构建的出游计划自动规划系统，覆盖多智能体协作核心知识点。
 
 ## 🏗️ 系统架构
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│                Streamlit Web UI                      │
+│              React + Vite 前端                       │
 │    对话界面 + 行程卡片 + 预算图表 + 天气展示          │
 └───────────────────────┬─────────────────────────────┘
                         │
 ┌───────────────────────▼─────────────────────────────┐
+│           FastAPI 后端 + WebSocket                    │
 │              Harness 统一运行层                       │
 │  thread_id · 状态合并 · 流式事件 · interrupt/resume    │
 └───────────────────────┬─────────────────────────────┘
@@ -43,7 +44,7 @@
 | **反思机制** | `graph/builder.py` | 生成→审核→迭代优化循环 |
 | **记忆系统** | `graph/checkpoints.py` | MemorySaver + InMemoryStore |
 | **并行执行** | `graph/subgraphs.py` | asyncio.gather 并行查询 |
-| **流式输出** | `ui/app.py` | astream + stream_mode |
+| **流式输出** | `backend/api/websocket.py` | astream + stream_mode |
 | **统一 Harness** | `harness/travel_harness.py` | UI、CLI、测试共用同一工作流运行入口 |
 | **子图嵌套** | `graph/subgraphs.py` | 子图作为节点复用 |
 | **条件边** | `graph/builder.py` | add_conditional_edges |
@@ -56,6 +57,11 @@
 ```bash
 cd travel_planner
 pip install -r requirements.txt
+
+# 安装前端依赖
+cd frontend
+pnpm install
+cd ..
 ```
 
 ### 2. 配置环境变量（可选）
@@ -68,11 +74,15 @@ cp .env.example .env
 ### 3. 启动应用
 
 ```bash
-cd travel_planner
-streamlit run ui/app.py
+# 启动后端
+python run.py
+
+# 另一个终端，启动前端
+cd frontend
+pnpm dev
 ```
 
-浏览器打开 http://localhost:8501 即可使用。
+浏览器打开 http://localhost:3004 即可使用。
 
 也可以通过 harness 直接跑一次工作流：
 
@@ -125,9 +135,9 @@ travel_planner/
 │   ├── date_utils.py         # 日期计算
 │   ├── geo_utils.py          # 地理距离
 │   └── budget_calculator.py  # 预算计算
-├── ui/                       # 前端
-│   ├── app.py                # Streamlit 主应用
-│   └── components.py         # UI 组件
+├── frontend/                 # React + Vite 前端
+│   ├── src/                  # 源码
+│   └── package.json          # 前端依赖
 └── tests/                    # 测试
 ```
 

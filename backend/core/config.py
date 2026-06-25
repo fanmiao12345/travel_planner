@@ -103,7 +103,7 @@ class Settings(BaseSettings):
     def get_llm(self):
         """获取 LLM 实例（延迟初始化）。
 
-        每次调用都从 Settings 读取最新值。Streamlit UI 侧边栏
+        每次调用都从 Settings 读取最新值。前端侧边栏
         会动态写 os.environ，调用前应先 reset_settings()。
         """
         from langchain_openai import ChatOpenAI

@@ -2,7 +2,7 @@
 出游计划自动规划平台 — 快速启动脚本
 
 用法：
-    python run.py          # 启动 Streamlit Web UI
+    python run.py          # 启动 FastAPI 后端
     python run.py test     # 运行组件测试
     python run.py harness "西安3日游，一个人，预算3000元"  # 通过 harness 跑工作流
     python run.py mcp      # 启动 MCP 服务器（独立模式）
@@ -24,12 +24,17 @@ sys.path.insert(0, ".")
 
 
 def run_ui():
-    """启动 Streamlit Web UI"""
+    """启动 FastAPI 后端"""
+    from backend.core.config import get_settings
+    settings = get_settings()
     print("🌍 启动出游计划自动规划平台...")
-    print("📡 访问地址: http://localhost:8501")
-    print("💡 首次启动较慢，请耐心等待...")
-    subprocess.run([sys.executable, "-m", "streamlit", "run", "ui/app.py",
-                    "--server.headless", "true"])
+    print(f"📡 API 地址: http://{settings.host}:{settings.port}")
+    print("💡 前端请在 frontend/ 目录执行 pnpm dev 启动")
+    subprocess.run([
+        sys.executable, "-m", "uvicorn",
+        "backend.main:create_app", "--factory",
+        "--host", settings.host, "--port", str(settings.port),
+    ])
 
 
 def run_test():
