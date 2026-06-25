@@ -211,6 +211,22 @@ async def plan_travel_stream(request: Request):
             except Exception:
                 pass
             await queue.put({"type": "_error", "message": str(e)})
+        finally:
+            # 无论何种原因退出（正常完成、异常、协程取消），都确保最终状态写入。
+            # 避免用户切换页面导致 SSE 断开后，任务永远停在"进行中"。
+            try:
+                existing = eval_store.get_task(task_id)
+                if existing and existing.get("status") == "in_progress":
+                    final_state = dict(harness.final_state)
+                    expected_agents = {"route_planner", "weather_forecaster", "transport_advisor",
+                                       "accommodation_manager", "food_advisor", "budget_optimizer"}
+                    completed_set = completed_agents & expected_agents
+                    agent_completion_rate = len(completed_set) / len(expected_agents) if expected_agents else 0
+                    has_final_plan = 1.0 if final_state.get("final_plan") else 0.0
+                    accuracy = round(agent_completion_rate * 0.7 + has_final_plan * 0.3, 2)
+                    save_current_metrics(accuracy=accuracy, status="completed", final_state=final_state, finish=True)
+            except Exception:
+                pass
 
     asyncio.create_task(run_and_signal())
 
