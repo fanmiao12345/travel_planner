@@ -1,0 +1,55 @@
+[project]
+name = "travel-planner"
+version = "2.0.0"
+description = "出游计划自动规划多智能体平台 — LangGraph + FastAPI + React"
+requires-python = ">=3.11"
+dependencies = [
+    # LangGraph 核心
+    "langgraph>=0.4.0",
+    "langgraph-supervisor>=0.0.6",
+    "langgraph-swarm>=0.0.3",
+    "langchain-openai>=0.3.0",
+    "langchain-community>=0.3.0",
+    "langchain-mcp-adapters>=0.1.0",
+    "mcp>=1.0.0",
+    # Web 框架
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
+    "websockets>=12.0",
+    # HTTP 客户端
+    "httpx>=0.27.0",
+    "aiohttp>=3.10.0",
+    # 网页内容提取
+    "readability-lxml>=0.8.1",
+    "lxml>=5.0.0",
+    # 搜索
+    "tavily-python>=0.3.0",
+    # 配置
+    "pydantic>=2.0.0",
+    "pydantic-settings>=2.0.0",
+    "python-dotenv>=1.0.0",
+]
+
+[project.optional-dependencies]
+streamlit = [
+    "streamlit>=1.40.0",
+    "plotly>=5.24.0",
+]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.24.0",
+    "pytest-cov>=5.0.0",
+    "ruff>=0.4.0",
+    "mypy>=1.10.0",
+]
+
+[project.scripts]
+travel-planner = "backend.main:main"
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

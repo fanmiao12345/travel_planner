@@ -1,0 +1,33 @@
+"""
+美食推荐 Skill — 封装 food_advisor agent
+"""
+
+from __future__ import annotations
+
+from .base import BaseSkill, SkillContext, SkillResult
+from .registry import SkillRegistry
+
+
+class FoodSkill(BaseSkill):
+    name = "food"
+    description = "搜索目的地特色美食、餐厅推荐和美食街"
+    version = "1.0.0"
+    dependencies: list[str] = []
+
+    async def execute(self, context: SkillContext) -> SkillResult:
+        from agents.food_advisor import create_food_advisor_agent
+        from backend.core.config import get_settings
+
+        agent = create_food_advisor_agent()
+        settings = get_settings()
+        llm = settings.get_llm()
+        agent_with_llm = agent.with_config({"configurable": {"llm": llm}})
+
+        result = await agent_with_llm.ainvoke({
+            "messages": [{"role": "user", "content": context.task}]
+        })
+        output = result["messages"][-1].content if result.get("messages") else str(result)
+        return SkillResult(output=output, metadata={"skill": self.name})
+
+
+SkillRegistry().register(FoodSkill())
