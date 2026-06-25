@@ -210,7 +210,12 @@ async def resume_travel(request: Request):
     from graph.builder import get_graph
     from harness.travel_harness import merge_travel_state
 
-    session = request.app.state.session_manager.get_or_create(session_id)
+    session = request.app.state.session_manager.get(session_id)
+
+    # 会话不存在（后端重启后内存丢失）
+    if not session or not session.travel_state:
+        return {"error": "SESSION_EXPIRED", "message": "会话已过期，请重新提交旅行需求"}
+
     previous_state = dict(session.travel_state or {})
 
     harness = TravelPlannerHarness(thread_id=session_id, graph=get_graph(), initial_state=previous_state)
@@ -243,7 +248,14 @@ async def resume_travel_stream(request: Request):
 
     queue: asyncio.Queue = asyncio.Queue()
     sm = request.app.state.session_manager
-    session = sm.get_or_create(session_id)
+    session = sm.get(session_id)
+
+    # 会话不存在（后端重启后内存丢失），返回明确错误
+    if not session or not session.travel_state:
+        async def event_generator():
+            yield f'data: {{"type": "_error", "message": "SESSION_EXPIRED"}}\n\n'
+        return StreamingResponse(event_generator(), media_type="text/event-stream")
+
     previous_state = dict(session.travel_state or {})
 
     async def run_and_signal():
@@ -308,6 +320,16 @@ async def resume_travel_stream(request: Request):
 
 
 # ── 会话管理 ──────────────────────────────────────────────
+
+@router.get("/api/session/{session_id}/validate")
+async def validate_session(session_id: str, request: Request):
+    """验证会话是否仍然有效（用于前端检测后端重启）。"""
+    sm = request.app.state.session_manager
+    session = sm.get(session_id)
+    if not session or not session.travel_state:
+        return {"valid": False, "reason": "session_not_found"}
+    return {"valid": True, "awaiting_review": session.awaiting_review}
+
 
 @router.get("/api/sessions")
 async def list_sessions(request: Request):

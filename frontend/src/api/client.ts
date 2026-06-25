@@ -199,3 +199,8 @@ export async function fetchRouteData(sessionId: string): Promise<any> {
   })
   return resp.json()
 }
+
+export async function validateSession(sessionId: string): Promise<{ valid: boolean; reason?: string; awaiting_review?: boolean }> {
+  const resp = await fetch(`/api/session/${sessionId}/validate`)
+  return resp.json()
+}

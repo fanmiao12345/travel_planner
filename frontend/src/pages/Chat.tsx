@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { useI18n } from '../i18n/context'
-import { type AgentStep } from '../api/client'
+import { type AgentStep, validateSession } from '../api/client'
 import { useStream } from '../hooks/useStream'
 import { streamStore } from '../stores/streamStore'
 import AgentProgress from '../components/AgentProgress'
@@ -70,10 +70,22 @@ export default function Chat() {
     } catch {}
   }, [messages, sessionId])
 
-  // 注意：不再检查 sessionId 有效性，因为：
-  // 1. Session 在内存中，切换页面时仍然有效
-  // 2. 只有后端重启才会导致 session 失效
-  // 3. 检查会导致误删有效的 sessionId
+  // 页面加载时验证 session 是否仍然有效（后端重启会导致内存 session 丢失）
+  useEffect(() => {
+    if (!sessionId) return
+    validateSession(sessionId).then((result) => {
+      if (!result.valid) {
+        // 后端 session 已丢失，清除本地状态
+        streamStore.clear()
+        setMessages((prev) => [...prev, {
+          role: 'assistant',
+          content: '⚠️ 会话已过期（后端可能已重启）。请重新提交您的旅行需求。',
+        }])
+      }
+    }).catch(() => {
+      // 网络错误，不清除状态，让用户继续操作
+    })
+  }, []) // 只在组件挂载时执行一次
 
   const handleSend = () => {
     const text = input.trim()
@@ -130,7 +142,16 @@ export default function Chat() {
 
   const handleError = (msg: string) => {
     pendingConfirmRef.current = false
-    setMessages((prev) => [...prev, { role: 'assistant', content: `❌ ${msg}` }])
+    if (msg === 'SESSION_EXPIRED') {
+      // 后端 session 已丢失，清除本地状态
+      streamStore.clear()
+      setMessages((prev) => [...prev, {
+        role: 'assistant',
+        content: '⚠️ 会话已过期（后端可能已重启）。请重新提交您的旅行需求。',
+      }])
+    } else {
+      setMessages((prev) => [...prev, { role: 'assistant', content: `❌ ${msg}` }])
+    }
   }
 
   const handleReviewAction = (action: string) => {
