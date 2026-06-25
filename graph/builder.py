@@ -120,9 +120,24 @@ def _make_agent_node(agent, output_key: str, phase_msg: str):
         last_message = result["messages"][-1]
         output = last_message.content if hasattr(last_message, "content") else str(last_message)
 
+        # 从 LLM 响应提取真实 token 用量
+        input_tokens = 0
+        output_tokens = 0
+        for msg in result.get("messages", []):
+            usage = getattr(msg, "usage_metadata", None) or {}
+            if usage:
+                input_tokens += usage.get("input_tokens", 0) or 0
+                output_tokens += usage.get("output_tokens", 0) or 0
+
+        # 统计真实工具调用次数（AIMessage 中的 tool_calls + ToolMessage）
+        tool_call_count = 0
+        for msg in result.get("messages", []):
+            if getattr(msg, "tool_calls", None):
+                tool_call_count += len(msg.tool_calls)
+            if getattr(msg, "type", "") == "tool" or msg.__class__.__name__ == "ToolMessage":
+                pass  # ToolMessage 不重复计数
+
         # 根据字段类型包装输出，避免 reducer 报错
-        # TravelState 里有些字段是 dict reducer，有些是 list reducer。
-        # 这里必须保持字段形状一致，否则 LangGraph 合并状态时会出错。
         if output_key in _dict_keys:
             wrapped = {"content": output, "react_trace": react_trace}
         elif output_key in _list_keys:
@@ -133,7 +148,11 @@ def _make_agent_node(agent, output_key: str, phase_msg: str):
         return {
             output_key: wrapped,
             "evidence_sources": evidence_sources,
-            # messages 字段用于聊天区/执行日志展示；真正业务数据写入 output_key。
+            "_metrics": {
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "tool_calls": tool_call_count,
+            },
             "messages": [SystemMessage(content=f"[{phase_msg} · ReAct]\n{react_trace}\n\nFinal: {_preview_text(output, 240)}")],
         }
 

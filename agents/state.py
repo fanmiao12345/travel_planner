@@ -36,6 +36,21 @@ def append_or_clear(existing: list, new: list) -> list:
     return (existing or []) + (new or [])
 
 
+def accumulate_metrics(existing: dict, new: dict) -> dict:
+    """累加指标 reducer — 各 Agent 节点的 token/tool 计数累加。"""
+    if existing is None:
+        return new or {}
+    if new is None:
+        return existing
+    result = dict(existing)
+    for k, v in (new or {}).items():
+        if isinstance(v, (int, float)):
+            result[k] = result.get(k, 0) + v
+        else:
+            result[k] = v
+    return result
+
+
 def append_unique(existing: list, new: list) -> list:
     """追加去重 reducer — 避免重复项"""
     if new == ["__CLEAR__"]:
@@ -158,6 +173,9 @@ class TravelState(TypedDict):
     final_plan: Annotated[dict, merge_dict]
     """最终整合的出游计划"""
 
+    _metrics: Annotated[dict, accumulate_metrics]
+    """运行时指标累加：input_tokens, output_tokens, tool_calls"""
+
 
 # ============================================
 # 辅助函数
@@ -191,4 +209,5 @@ def create_initial_state(user_request: str) -> TravelState:
         is_approved=False,
         iteration_count=0,
         final_plan={},
+        _metrics={},
     )

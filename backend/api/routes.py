@@ -140,17 +140,21 @@ async def plan_travel_stream(request: Request):
 
                 if event.event_type == "node_start":
                     msg = f"{label} 正在执行..."
-                    # 记录 Agent 数量
-                    if event.node_name not in completed_agents:
-                        collector.record_agent_spawn(task_id)
                 elif event.event_type == "node_complete":
                     msg = f"{label} 已完成" + (f"（耗时 {event.elapsed:.1f}s）" if event.elapsed else "")
+                    # 只对专业 Agent 节点计数（不重复计 supervisor/parse/summarize/review）
+                    agent_nodes = {"route_planner", "weather_forecaster", "transport_advisor",
+                                   "accommodation_manager", "food_advisor", "budget_optimizer"}
+                    if event.node_name in agent_nodes and event.node_name not in completed_agents:
+                        collector.record_agent_spawn(task_id)
                     completed_agents.add(event.node_name)
-                    # 记录该节点的 evidence 作为工具调用
-                    node_evidence = len(harness.final_state.get("evidence_sources", []) or [])
-                    if node_evidence > 0:
-                        collector._tasks.get(task_id, {})["tool_calls"] = node_evidence
-                        collector._tasks.get(task_id, {})["tool_successes"] = node_evidence
+                    # 从 _metrics 提取最新的 token/tool 数据
+                    metrics_data = harness.final_state.get("_metrics", {})
+                    t = collector._tasks.get(task_id)
+                    if t and metrics_data:
+                        t["tokens"] = metrics_data.get("input_tokens", 0) + metrics_data.get("output_tokens", 0)
+                        t["tool_calls"] = metrics_data.get("tool_calls", 0)
+                        t["tool_successes"] = t["tool_calls"]
                     # 每完成一个节点就保存一次，让仪表盘实时更新
                     save_current_metrics(accuracy=0.5, status="in_progress")
                 elif event.event_type == "token":
@@ -183,6 +187,12 @@ async def plan_travel_stream(request: Request):
             # 保存 final_state 到应用级 session，供报告/地图/后续恢复使用。
             final_state = dict(harness.final_state)
 
+            # 从 _metrics 累加字段提取真实 token 和工具调用数据
+            metrics_data = final_state.get("_metrics", {})
+            real_input_tokens = metrics_data.get("input_tokens", 0)
+            real_output_tokens = metrics_data.get("output_tokens", 0)
+            real_tool_calls = metrics_data.get("tool_calls", 0)
+
             # 计算真实准确率：基于完成的 Agent 数量和是否有最终方案
             expected_agents = {"route_planner", "weather_forecaster", "transport_advisor",
                                "accommodation_manager", "food_advisor", "budget_optimizer"}
@@ -191,10 +201,12 @@ async def plan_travel_stream(request: Request):
             has_final_plan = 1.0 if final_state.get("final_plan") else 0.0
             accuracy = round(agent_completion_rate * 0.7 + has_final_plan * 0.3, 2)
 
-            # 从 evidence_sources 统计真实工具调用数
-            evidence_count = len(final_state.get("evidence_sources", []) or [])
-            if evidence_count > 0:
-                collector.record_tool_call(task_id, success=True)  # 确保至少记录一次
+            # 用真实数据更新 collector
+            t = collector._tasks.get(task_id)
+            if t:
+                t["tokens"] = real_input_tokens + real_output_tokens
+                t["tool_calls"] = real_tool_calls
+                t["tool_successes"] = real_tool_calls  # 假设都成功（失败的会抛异常）
 
             save_current_metrics(accuracy=accuracy, status="completed", final_state=final_state, finish=True)
 
