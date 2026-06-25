@@ -15,10 +15,10 @@ export default function EvalDashboard() {
 
   useEffect(() => {
     fetchMetrics().then(setMetrics).catch(() => {})
-    // 每 10 秒刷新一次，以便看到进行中的任务
+    // 每 3 秒刷新一次，以便实时看到进行中的任务
     const timer = setInterval(() => {
       fetchMetrics().then(setMetrics).catch(() => {})
-    }, 10000)
+    }, 3000)
     return () => clearInterval(timer)
   }, [])
 
