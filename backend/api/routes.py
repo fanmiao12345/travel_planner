@@ -307,7 +307,7 @@ async def resume_travel_stream(request: Request):
 
             await asyncio.wait_for(consume_resume(), timeout=45)
 
-            # 保存恢复后的状态。resume 往往只返回“确认”相关字段，必须合并到原计划，
+            # 保存恢复后的状态。resume 往往只返回"确认"相关字段，必须合并到原计划，
             # 否则报告生成时会丢失 final_plan / route_plan 等核心数据。
             final_state = final_state or dict(harness.final_state)
             merged_state = merge_travel_state(previous_state, final_state)
