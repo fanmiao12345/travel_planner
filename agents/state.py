@@ -10,7 +10,6 @@
 """
 
 from typing import Annotated, TypedDict
-import operator
 from langgraph.graph.message import add_messages
 
 
@@ -24,12 +23,23 @@ def merge_dict(existing: dict, new: dict) -> dict:
         return new or {}
     if new is None:
         return existing
+    if isinstance(new, dict) and new.get("__clear__"):
+        return {}
     # 后写入的节点结果覆盖同名字段，适合 route_plan/weather_info 这类结构化对象。
-    return {**existing, **new}
+    return {**existing, **{k: v for k, v in new.items() if k != "__clear__"}}
+
+
+def append_or_clear(existing: list, new: list) -> list:
+    """追加列表 reducer，支持内部清空标记。"""
+    if new == ["__CLEAR__"]:
+        return []
+    return (existing or []) + (new or [])
 
 
 def append_unique(existing: list, new: list) -> list:
     """追加去重 reducer — 避免重复项"""
+    if new == ["__CLEAR__"]:
+        return []
     if existing is None:
         return new or []
     if new is None:
@@ -110,22 +120,22 @@ class TravelState(TypedDict):
     route_plan: Annotated[dict, merge_dict]
     """路线规划师的输出"""
 
-    transport_options: Annotated[list, operator.add]
+    transport_options: Annotated[list, append_or_clear]
     """交通方案列表。operator.add 实现跨节点累加。"""
 
     weather_info: Annotated[dict, merge_dict]
     """天气预报信息"""
 
-    accommodation_options: Annotated[list, operator.add]
+    accommodation_options: Annotated[list, append_or_clear]
     """住宿方案列表"""
 
-    food_recommendations: Annotated[list, operator.add]
+    food_recommendations: Annotated[list, append_or_clear]
     """美食推荐列表"""
 
     budget_breakdown: Annotated[dict, merge_dict]
     """预算明细分解"""
 
-    optimization_suggestions: Annotated[list, operator.add]
+    optimization_suggestions: Annotated[list, append_or_clear]
     """省钱优化建议"""
 
     # ---- 证据与可观测性 ----

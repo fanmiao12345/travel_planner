@@ -60,6 +60,26 @@ DATE_PATTERNS = [
     r"\d{1,2}\s*月\s*(?:上旬|中旬|下旬|底)",
 ]
 
+OFFICIAL_HINTS = ("gov.cn", ".gov", "官网", "官方", "文旅", "文化和旅游", "主办方", "票务", "公告")
+
+
+def _is_official_item(item: dict) -> bool:
+    text = " ".join([
+        str(item.get("title", "")),
+        str(item.get("url", "")),
+        str(item.get("snippet", "")),
+    ]).lower()
+    return any(hint.lower() in text for hint in OFFICIAL_HINTS)
+
+
+def _rank_official_first(items: list[dict]) -> list[dict]:
+    ranked = []
+    for item in items:
+        item = dict(item)
+        item["is_official"] = _is_official_item(item)
+        ranked.append(item)
+    return sorted(ranked, key=lambda item: not item.get("is_official"))
+
 
 def _extract_date_candidates(text: str) -> list[str]:
     """Extract visible date-like strings from search snippets."""
@@ -202,8 +222,33 @@ async def search_travel_guide(destination: str, days: int = 3, style: str = "经
         days: 计划游玩天数
         style: 旅行风格（经典/文艺/冒险/亲子/穷游）
     """
-    query = f"{destination}{days}天{style}旅游攻略"
-    return await web_search(query)
+    queries = [
+        f"{destination} 官方旅游 官网 文旅 景区公告 开放时间 门票",
+        f"{destination}{days}天{style}旅游攻略 官方 文旅",
+    ]
+    merged = []
+    sources = []
+    for query in queries:
+        raw = await web_search(query)
+        data = json.loads(raw)
+        sources.append(data.get("source", "search"))
+        merged.extend(data.get("results", []))
+
+    deduped = []
+    seen = set()
+    for item in _rank_official_first(merged):
+        key = item.get("url") or item.get("title")
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(item)
+
+    return json.dumps({
+        "query": " | ".join(queries),
+        "results": deduped[:6],
+        "source": "+".join(sorted(set(sources))),
+        "note": "已优先搜索官网、文旅和景区公告；非官方来源只能作为参考，开放时间/门票/预约规则需以官网为准。",
+    }, ensure_ascii=False, indent=2)
 
 
 @mcp.tool()
@@ -214,9 +259,10 @@ async def search_trending_places(destination: str, count: int = 5) -> str:
         destination: 目的地城市或地区
         count: 返回数量
     """
-    query = f"{destination} 最近很火 网红打卡 新晋热门 景点 旅行攻略"
+    query = f"{destination} 最近很火 网红打卡 新晋热门 景点 官方 文旅 景区公告"
     raw = await web_search(query)
     data = json.loads(raw)
+    results = _rank_official_first(data.get("results", []))
     return json.dumps({
         "destination": destination,
         "query": query,
@@ -226,10 +272,11 @@ async def search_trending_places(destination: str, count: int = 5) -> str:
                 "name": item.get("title", "")[:40],
                 "reason": item.get("snippet", ""),
                 "url": item.get("url", ""),
+                "is_official": item.get("is_official", False),
             }
-            for item in data.get("results", [])[:count]
+            for item in results[:count]
         ],
-        "note": "结果来自实时搜索摘要，热门程度会随时间变化，建议出行前再次确认开放时间和预约规则。",
+        "note": "已优先排序官网/文旅/景区公告；普通平台热度只作参考，开放时间和预约规则以官方为准。",
     }, ensure_ascii=False, indent=2)
 
 
@@ -248,6 +295,8 @@ async def search_event_schedule(destination: str, event_name: str, date_hint: st
     if date_hint:
         base_query = f"{base_query} {date_hint}"
     queries = [
+        f"{destination} {event_name} 官网 官方公告 主办方 票务",
+        f"{destination} {event_name} 文旅 官方 举办时间 地点 门票",
         base_query,
         f"{destination} {event_name} 活动时间 什么时候 举办",
         f"{destination} {event_name} 官方 公告 日程",
@@ -268,6 +317,7 @@ async def search_event_schedule(destination: str, event_name: str, date_hint: st
                 "url": item.get("url", ""),
                 "snippet": item.get("snippet", ""),
                 "date_candidates": _extract_date_candidates(text),
+                "is_official": _is_official_item(item),
             })
 
     deduped = []
@@ -286,10 +336,11 @@ async def search_event_schedule(destination: str, event_name: str, date_hint: st
         "date_hint": date_hint,
         "queries": queries,
         "sources": sorted(set(sources)),
-        "candidates": deduped[:8],
+        "candidates": _rank_official_first(deduped)[:8],
         "has_confirmed_date_candidate": has_date,
+        "has_official_candidate": any(item.get("is_official") for item in deduped),
         "note": (
-            "请优先使用官方/主办方/票务平台来源；如果候选结果没有日期，不要从当前时间顺推，必须提示用户活动时间未确认。"
+            "必须优先使用官网/文旅/主办方/权威票务来源；如果没有官方候选或候选结果没有日期，不要从当前时间顺推，必须提示用户活动时间未确认。"
         ),
     }, ensure_ascii=False, indent=2)
 

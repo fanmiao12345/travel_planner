@@ -47,13 +47,19 @@ async def supervisor_node(state: TravelState) -> Command[Literal[
     phase = state.get("current_phase", "planning")
     iteration = state.get("iteration_count", 0)
 
+    def has_content(value) -> bool:
+        """判断节点结果是否真的有内容，避免空壳 dict 被当成已完成。"""
+        if isinstance(value, dict):
+            return any(bool(v) for k, v in value.items() if k != "react_trace")
+        return bool(value)
+
     # 构建上下文摘要
-    has_route = bool(state.get("route_plan"))
-    has_transport = bool(state.get("transport_options"))
-    has_weather = bool(state.get("weather_info"))
-    has_hotel = bool(state.get("accommodation_options"))
-    has_food = bool(state.get("food_recommendations"))
-    has_budget = bool(state.get("budget_breakdown"))
+    has_route = has_content(state.get("route_plan"))
+    has_transport = has_content(state.get("transport_options"))
+    has_weather = has_content(state.get("weather_info"))
+    has_hotel = has_content(state.get("accommodation_options"))
+    has_food = has_content(state.get("food_recommendations"))
+    has_budget = has_content(state.get("budget_breakdown"))
 
     # 路由顺序是保守的串行流程：
     # 先规划路线，再补天气/交通/住宿/美食/预算，最后汇总。
@@ -147,6 +153,9 @@ async def summarize_node(state: TravelState) -> dict:
 8. ⚠️ 注意事项
 
 硬性要求：
+- 数据来源只能使用上面“可引用来源”中真实存在的 [S1] 编号和 URL，禁止自行编造官网、链接、票务平台或来源名称。
+- 活动时间、开放时间、门票/预约规则、景区公告、赛事/展会/演唱会档期等强事实，必须优先引用官网、文旅部门、景区公告、主办方或权威票务来源。
+- 如果只有普通攻略/社媒/搜索摘要，没有官网或官方公告支持，必须写“需以官网/官方公告二次确认”，不能写成确定事实。
 - 景点、活动时间、网红地、餐厅、住宿片区、天气和自驾路线等事实性内容，能引用来源时必须使用 [S1] 这种来源编号。
 - 没有来源支持的内容不能写成确定事实，必须标注"需二次确认"。
 - 如果用户提到活动/节庆/赛事/展会/演唱会，而证据里没有活动档期来源，必须明确写"活动时间未确认"，不能从当前日期顺推。
@@ -154,18 +163,29 @@ async def summarize_node(state: TravelState) -> dict:
 - 不要输出"著名景点1/2/3"或泛化模板。
 """
 
-    # 使用 astream 实现 token 级流式输出
+    # 使用 astream 实现 token 级流式输出（120 秒超时）
+    import asyncio as _asyncio
     full_content = ""
     try:
-        async for chunk in llm.astream([SystemMessage(content=summary_prompt)]):
-            if chunk.content:
-                full_content += chunk.content
+        async def _stream_summary():
+            nonlocal full_content
+            async for chunk in llm.astream([SystemMessage(content=summary_prompt)]):
+                if chunk.content:
+                    full_content += chunk.content
+        await _asyncio.wait_for(_stream_summary(), timeout=120)
+    except _asyncio.TimeoutError:
+        pass
     except Exception:
         pass
     # 兜底：如果流式输出为空，用 ainvoke 获取完整结果
     if not full_content.strip():
-        response = await llm.ainvoke([SystemMessage(content=summary_prompt)])
-        full_content = response.content
+        try:
+            response = await _asyncio.wait_for(
+                llm.ainvoke([SystemMessage(content=summary_prompt)]), timeout=120
+            )
+            full_content = response.content
+        except _asyncio.TimeoutError:
+            full_content = "⏰ 汇总超时，各专家的分析结果已保存，请查看上方详细信息。"
     final_content = (
         full_content
         + format_sources_markdown(evidence_sources)
@@ -334,20 +354,32 @@ async def parse_request_node(state: TravelState) -> dict:
         # 首选模型解析，因为自然语言表达很多样：
         # "五一后两天""一家三口""预算一万五"等都更适合交给模型。
         # 使用 astream 实现 token 级流式输出，让用户实时看到解析过程。
+        # 设置 15 秒超时，避免 LLM 响应慢导致整个流程卡住。
+        import asyncio as _asyncio
         full_content = ""
         try:
-            async for chunk in llm.astream([HumanMessage(content=parse_prompt)]):
-                if chunk.content:
-                    full_content += chunk.content
+            async def _stream_parse():
+                nonlocal full_content
+                async for chunk in llm.astream([HumanMessage(content=parse_prompt)]):
+                    if chunk.content:
+                        full_content += chunk.content
+            await _asyncio.wait_for(_stream_parse(), timeout=15)
+        except _asyncio.TimeoutError:
+            full_content = ""  # 超时则回退到本地解析
         except Exception:
             pass
         # 兜底：如果流式输出为空，用 ainvoke 获取完整结果
         if not full_content.strip():
-            response = await llm.ainvoke([HumanMessage(content=parse_prompt)])
-            full_content = response.content
+            try:
+                response = await _asyncio.wait_for(
+                    llm.ainvoke([HumanMessage(content=parse_prompt)]), timeout=15
+                )
+                full_content = response.content
+            except _asyncio.TimeoutError:
+                full_content = ""
         info = json.loads(full_content.strip().replace("```json", "").replace("```", ""))
     except Exception:
-        # 模型不可用或返回非 JSON 时，退回本地正则解析。
+        # 模型不可用、超时或返回非 JSON 时，退回本地正则解析。
         info = parse_locally(state["user_request"])
 
     if not info.get("start_date"):
@@ -408,6 +440,16 @@ async def human_review_node(state: TravelState) -> dict:
             }
         elif "重新" in user_response:
             return {
+                "route_plan": {"__clear__": True},
+                "transport_options": ["__CLEAR__"],
+                "weather_info": {"__clear__": True},
+                "accommodation_options": ["__CLEAR__"],
+                "food_recommendations": ["__CLEAR__"],
+                "budget_breakdown": {"__clear__": True},
+                "optimization_suggestions": ["__CLEAR__"],
+                "evidence_sources": ["__CLEAR__"],
+                "quality_report": {"__clear__": True},
+                "final_plan": {"__clear__": True},
                 "is_approved": False,
                 "current_phase": "planning",
                 "iteration_count": state.get("iteration_count", 0) + 1,
@@ -416,6 +458,16 @@ async def human_review_node(state: TravelState) -> dict:
         else:
             # 反思优化
             return {
+                "route_plan": {"__clear__": True},
+                "transport_options": ["__CLEAR__"],
+                "weather_info": {"__clear__": True},
+                "accommodation_options": ["__CLEAR__"],
+                "food_recommendations": ["__CLEAR__"],
+                "budget_breakdown": {"__clear__": True},
+                "optimization_suggestions": ["__CLEAR__"],
+                "evidence_sources": ["__CLEAR__"],
+                "quality_report": {"__clear__": True},
+                "final_plan": {"__clear__": True},
                 "is_approved": False,
                 "current_phase": "planning",
                 "iteration_count": state.get("iteration_count", 0) + 1,

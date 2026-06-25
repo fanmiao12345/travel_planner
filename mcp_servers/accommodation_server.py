@@ -8,7 +8,6 @@
 """
 
 import json
-import random
 from mcp.server.fastmcp import FastMCP
 
 mcp = FastMCP("accommodation-server")
@@ -109,38 +108,6 @@ def _filter_by_budget(items: list[dict], max_price: float, price_key: str) -> li
     return [item for item in items if item.get(price_key, 0) <= max_price]
 
 
-def _generate_hotels(city: str, budget: float) -> list[dict]:
-    """为未知城市生成通用酒店数据"""
-    # 这里是没有接入真实酒店 API 时的结构化示例。
-    # 专业 Agent 会另外调用搜索工具查目的地住宿资料，避免只依赖这些样例。
-    templates = [
-        {"name": f"{city}国际大酒店", "star": 5, "price": 900, "rating": 4.5, "tags": ["豪华"]},
-        {"name": f"{city}商务酒店", "star": 3, "price": 350, "rating": 4.2, "tags": ["舒适"]},
-        {"name": f"{city}快捷酒店", "star": 2, "price": 180, "rating": 3.8, "tags": ["经济"]},
-        {"name": f"{city}青年旅舍", "star": 0, "price": 60, "rating": 4.0, "tags": ["青旅"]},
-    ]
-    for t in templates:
-        t["breakfast"] = t["star"] >= 3
-        t["wifi"] = True
-        t["pool"] = t["star"] >= 5
-        t["location"] = "市中心"
-    return templates
-
-
-def _generate_restaurants(city: str) -> list[dict]:
-    """为未知城市生成通用餐饮数据"""
-    # 与酒店类似，这里只是给 UI 一个稳定的数据形状。
-    # 真正的小众目的地美食应由 food_advisor 的搜索工具补充。
-    return [
-        {"name": f"{city}老字号餐厅", "cuisine": "地方菜", "avg_price": 80, "rating": 4.3,
-         "specialty": "地方特色菜", "location": "市中心", "budget_level": "中"},
-        {"name": f"{city}小吃街", "cuisine": "小吃", "avg_price": 30, "rating": 4.0,
-         "specialty": "各类小吃", "location": "老城区", "budget_level": "低"},
-        {"name": f"{city}网红餐厅", "cuisine": "创意菜", "avg_price": 120, "rating": 4.5,
-         "specialty": "创意融合菜", "location": "商业区", "budget_level": "中"},
-    ]
-
-
 # ============================================
 # MCP 工具定义
 # ============================================
@@ -158,8 +125,8 @@ def search_hotels(city: str, checkin: str = "", checkout: str = "", budget: floa
         star: 最低星级（0=不限, 3=三星, 5=五星）
         need_breakfast: 是否需要含早餐
     """
-    # 已知城市先用内置样例，未知城市生成同结构数据，保证下游 UI 可展示。
-    hotels = SAMPLE_HOTELS.get(city, _generate_hotels(city, budget))
+    # 已知城市先用内置样例，未知城市返回空列表和明确说明，避免编造酒店名。
+    hotels = SAMPLE_HOTELS.get(city, [])
 
     # 过滤
     filtered = [h for h in hotels if h["price"] <= budget]
@@ -188,9 +155,16 @@ def search_hotels(city: str, checkin: str = "", checkout: str = "", budget: floa
         "checkin": checkin or "待定",
         "checkout": checkout or "待定",
         "budget": budget,
+        "source": "sample" if city in SAMPLE_HOTELS else "unavailable",
         "total_found": len(filtered),
         "hotels": filtered,
-        "tip": "💡 预算紧张？选择青旅或民宿可节省50%以上" if budget < 300 else "💡 提前预订通常有早鸟优惠",
+        "tip": (
+            "💡 预算紧张？选择青旅或民宿可节省50%以上"
+            if filtered and budget < 300
+            else "💡 提前预订通常有早鸟优惠" if filtered
+            else "未接入该目的地实时酒店数据，请结合联网搜索或酒店平台二次确认"
+        ),
+        "note": "sample 仅为内置示例数据；unavailable 表示没有可用真实住宿数据，不能当作事实引用。",
     }
     return json.dumps(result, ensure_ascii=False, indent=2)
 
@@ -206,8 +180,8 @@ def search_restaurants(city: str, cuisine: str = "", budget_per_meal: float = 99
         budget_per_meal: 每餐人均预算上限（元）
         count: 返回数量
     """
-    # 餐厅工具返回结构化候选；真实热门餐厅应结合搜索结果二次确认。
-    restaurants = SAMPLE_RESTAURANTS.get(city, _generate_restaurants(city))
+    # 餐厅工具返回结构化候选；未知城市不生成假餐厅，交给搜索工具补充。
+    restaurants = SAMPLE_RESTAURANTS.get(city, [])
 
     # 过滤
     filtered = [r for r in restaurants if r["avg_price"] <= budget_per_meal]
@@ -222,9 +196,14 @@ def search_restaurants(city: str, cuisine: str = "", budget_per_meal: float = 99
         "city": city,
         "cuisine_filter": cuisine or "不限",
         "budget_per_meal": budget_per_meal,
+        "source": "sample" if city in SAMPLE_RESTAURANTS else "unavailable",
         "total_found": len(filtered),
         "restaurants": filtered,
-        "saving_tip": f"🍜 在{city}，当地小吃街和居民区餐馆通常是性价比最高的选择",
+        "saving_tip": (
+            f"🍜 在{city}，当地小吃街和居民区餐馆通常是性价比最高的选择"
+            if filtered else "未接入该目的地实时餐厅数据，请结合联网搜索或点评平台二次确认"
+        ),
+        "note": "sample 仅为内置示例数据；unavailable 表示没有可用真实餐厅数据，不能当作事实引用。",
     }
     return json.dumps(result, ensure_ascii=False, indent=2)
 
@@ -264,11 +243,13 @@ def get_food_guide(city: str) -> str:
     }
 
     guide = guides.get(city, {
-        "must_try": ["当地特色菜", "小吃街美食"],
-        "food_streets": ["市中心美食街"],
-        "tips": ["多看大众点评评分选择"],
-        "budget_daily": "人均80-150元/天可吃好",
+        "must_try": [],
+        "food_streets": [],
+        "tips": ["未接入该目的地本地美食样例，请通过联网搜索或点评平台确认特色菜和餐厅。"],
+        "budget_daily": "",
+        "source": "unavailable",
     })
+    guide.setdefault("source", "sample")
     guide["city"] = city
     return json.dumps(guide, ensure_ascii=False, indent=2)
 

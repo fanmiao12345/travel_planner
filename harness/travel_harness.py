@@ -48,6 +48,13 @@ def merge_travel_state(current: dict[str, Any] | None, update: dict[str, Any] | 
         if key == "messages":
             continue
 
+        if isinstance(value, dict) and value.get("__clear__"):
+            merged[key] = {}
+            continue
+        if isinstance(value, list) and value == ["__CLEAR__"]:
+            merged[key] = []
+            continue
+
         # reducer 字段在图内会合并；harness 在图外也要做同样的事情，
         # 否则前端实时展示时只能看到最后一个节点的局部更新。
         if isinstance(value, dict) and isinstance(merged.get(key), dict):

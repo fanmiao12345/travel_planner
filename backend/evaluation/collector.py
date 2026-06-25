@@ -83,6 +83,16 @@ class MetricsCollector:
         t = self._tasks.pop(task_id, None)
         if not t:
             return TaskMetrics(task_id=task_id)
+        return self._build_metrics(task_id, t, accuracy)
+
+    def snapshot_task(self, task_id: str, accuracy: float = 0.0) -> TaskMetrics:
+        """获取当前任务指标快照，不结束任务。"""
+        t = self._tasks.get(task_id)
+        if not t:
+            return TaskMetrics(task_id=task_id)
+        return self._build_metrics(task_id, t, accuracy)
+
+    def _build_metrics(self, task_id: str, t: dict, accuracy: float = 0.0) -> TaskMetrics:
         total_ms = int((time.monotonic() - t["start_time"]) * 1000)
         tc = t["tool_calls"]
         return TaskMetrics(

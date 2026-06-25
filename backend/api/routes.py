@@ -7,6 +7,7 @@ REST API 路由
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import time
 import uuid
@@ -93,18 +94,38 @@ async def plan_travel_stream(request: Request):
         task_id = f"task-{thread_id[:8]}"
         eval_store = request.app.state.eval_store
 
-        def save_current_metrics(accuracy: float = 0.0, status: str = "completed"):
-            """保存当前指标到数据库（支持中间保存和异常保存）"""
-            metrics = collector.finish_task(task_id, accuracy=accuracy)
+        def save_current_metrics(
+            accuracy: float = 0.0,
+            status: str = "completed",
+            final_state: dict[str, Any] | None = None,
+            finish: bool = False,
+        ):
+            """保存当前指标到数据库。
+
+            进行中保存只拍快照，最终/失败时才结束 collector，避免中间保存
+            把累计延迟和 agent 数清空。
+            """
+            metrics = (
+                collector.finish_task(task_id, accuracy=accuracy)
+                if finish else collector.snapshot_task(task_id, accuracy=accuracy)
+            )
+            evidence_count = len((final_state or {}).get("evidence_sources", []) or [])
+            tool_call_count = metrics.tool_call_count or evidence_count
+            tool_success_count = metrics.tool_success_count or evidence_count
+            tool_success_rate = (
+                metrics.tool_success_rate
+                if metrics.tool_call_count
+                else (1.0 if evidence_count else 0.0)
+            )
             eval_store.save_task_metrics({
                 "task_id": metrics.task_id,
                 "accuracy": metrics.accuracy,
                 "total_latency_ms": metrics.total_latency_ms,
                 "step_latencies": metrics.step_latencies,
                 "total_tokens": metrics.total_tokens,
-                "tool_call_count": metrics.tool_call_count,
-                "tool_success_count": metrics.tool_success_count,
-                "tool_success_rate": metrics.tool_success_rate,
+                "tool_call_count": tool_call_count,
+                "tool_success_count": tool_success_count,
+                "tool_success_rate": tool_success_rate,
                 "agent_count": metrics.agent_count,
                 "iteration_count": metrics.iteration_count,
                 "status": status,
@@ -134,14 +155,14 @@ async def plan_travel_stream(request: Request):
                     # 每完成 3 个步骤，中间保存一次指标
                     if step_count % 3 == 0:
                         save_current_metrics(accuracy=0.5, status="in_progress")
-                        # 重新开始记录（因为 finish_task 会清除内部状态）
-                        collector.start_task(task_id)
                 elif event.event_type == "token":
                     await queue.put({
                         "type": "token",
                         "node": event.node_name,
                         "message": msg,
                         "completed": event.completed_nodes,
+                        "update": event.update,
+                        "state": event.final_state,
                     })
                     continue
                 elif event.event_type == "tool_call":
@@ -152,6 +173,8 @@ async def plan_travel_stream(request: Request):
                         "node": event.node_name,
                         "message": msg,
                         "completed": event.completed_nodes,
+                        "update": event.update,
+                        "state": event.final_state,
                     })
                     continue
 
@@ -161,13 +184,15 @@ async def plan_travel_stream(request: Request):
                     "message": msg,
                     "elapsed": event.elapsed,
                     "completed": event.completed_nodes,
+                    "update": event.update,
+                    "state": event.final_state,
                 })
-
-            # 任务完成，最终保存指标
-            save_current_metrics(accuracy=0.8, status="completed")
 
             # 保存 final_state 到应用级 session，供报告/地图/后续恢复使用。
             final_state = dict(harness.final_state)
+            # 任务完成，最终保存指标
+            save_current_metrics(accuracy=0.8, status="completed", final_state=final_state, finish=True)
+
             session.travel_state = final_state
             session.completed_agents = list(final_state.get("_completed", []))
             session.current_phase = final_state.get("current_phase", session.current_phase)
@@ -177,7 +202,7 @@ async def plan_travel_stream(request: Request):
         except Exception as e:
             # 异常时也要保存已收集的指标
             try:
-                save_current_metrics(accuracy=0.0, status="failed")
+                save_current_metrics(accuracy=0.0, status="failed", finish=True)
             except Exception:
                 pass
             await queue.put({"type": "_error", "message": str(e)})
@@ -276,6 +301,8 @@ async def resume_travel_stream(request: Request):
                         "message": event.message,
                         "elapsed": event.elapsed,
                         "completed": event.completed_nodes,
+                        "update": event.update,
+                        "state": event.final_state,
                     })
 
             await asyncio.wait_for(consume_resume(), timeout=45)
@@ -398,7 +425,7 @@ async def get_optimization_log(request: Request):
 
 @router.post("/api/travel/report")
 async def generate_report(request: Request):
-    """生成 HTML 旅行报告。"""
+    """生成 Word 旅行报告。"""
     import logging
     logger = logging.getLogger(__name__)
 
@@ -414,20 +441,17 @@ async def generate_report(request: Request):
     if session:
         logger.info(f"[REPORT] travel_state keys: {list(session.travel_state.keys()) if session.travel_state else 'EMPTY'}")
 
-    # 如果指定的 session 不存在或没有 travel_state，尝试找最近一个有数据的 session
-    if not session or not session.travel_state:
-        all_sessions = sm.list_all()
-        logger.info(f"[REPORT] Looking for session with travel_state among {len(all_sessions)} sessions")
-        session = next((s for s in all_sessions if s.travel_state), None)
-        if session:
-            logger.info(f"[REPORT] Found session {session.session_id} with travel_state")
-
     if not session or not session.travel_state:
         return {"error": "未找到旅行计划数据，请先完成规划"}
 
-    from backend.api.report import generate_report_html
-    html = generate_report_html(session.travel_state)
-    return {"html": html}
+    from backend.api.report import generate_report_docx
+    docx_bytes = generate_report_docx(session.travel_state)
+    destination = session.travel_state.get("destination") or "旅行计划"
+    return {
+        "filename": f"旅行计划报告_{destination}.docx",
+        "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "content_base64": base64.b64encode(docx_bytes).decode("ascii"),
+    }
 
 
 @router.post("/api/travel/route-data")
@@ -439,8 +463,6 @@ async def get_route_data(request: Request):
 
     sm = request.app.state.session_manager
     session = sm.get(session_id)
-    if not session or not session.travel_state:
-        session = next((s for s in sm.list_all() if s.travel_state), None)
     if not session or not session.travel_state:
         return {"error": "未找到旅行计划数据"}
 

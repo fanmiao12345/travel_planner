@@ -4,13 +4,12 @@
 知识点：
   - FastMCP 多工具组织
   - 外部 API 集成 (Amadeus SDK)
-  - 内置样例数据和通用估算
+  - 内置样例数据和明确不可用结果
   - 错误处理与降级策略
 """
 
 import json
 import os
-import random
 from mcp.server.fastmcp import FastMCP
 
 mcp = FastMCP("transport-server")
@@ -89,13 +88,12 @@ def _reverse_key(key: tuple) -> tuple:
 
 
 def _reverse_flights(flights: list[dict], key: tuple) -> list[dict]:
-    """反转航班方向（简单模拟）"""
-    result = []
-    for f in flights:
-        rf = f.copy()
-        rf["price"] = int(f["price"] * random.uniform(0.9, 1.1))  # 价格微调
-        result.append(rf)
-    return result
+    """反转航班方向。
+
+    旧版本会随机调整价格，容易被下游当成真实票价。这里只保留
+    样例数据形状，并通过 source 标注为 sample_reverse。
+    """
+    return [f.copy() for f in flights]
 
 
 def _reverse_trains(trains: list[dict], key: tuple) -> list[dict]:
@@ -258,36 +256,28 @@ def search_flights(origin: str, destination: str, date: str = "") -> str:
     reverse_key = _reverse_key(key)
 
     # 当前没有接入正式航班 API，已知热门路线使用内置样例；
-    # 未知路线生成通用数据，仅用于展示工具结构，Agent prompt 会要求不要编造班次。
+    # 未知路线必须返回不可用，不能随机生成车次/航班。
+    source = "sample"
     if key in SAMPLE_FLIGHTS:
         flights = SAMPLE_FLIGHTS[key]
     elif reverse_key in SAMPLE_FLIGHTS:
+        source = "sample_reverse"
         flights = _reverse_flights(SAMPLE_FLIGHTS[reverse_key], reverse_key)
     else:
-        # 生成通用航班数据
-        airlines = ["中国国航", "东方航空", "南方航空", "海南航空", "春秋航空", "四川航空"]
+        source = "unavailable"
         flights = []
-        base_price = random.randint(500, 2000)
-        for i in range(random.randint(3, 6)):
-            dep_hour = random.randint(6, 21)
-            dur_hours = random.randint(1, 5)
-            flights.append({
-                "airline": random.choice(airlines),
-                "flight": f"{'CA' if i % 2 == 0 else 'MU'}{random.randint(1000, 9999)}",
-                "departure": f"{dep_hour:02d}:{random.choice(['00', '15', '30', '45'])}",
-                "arrival": f"{(dep_hour + dur_hours) % 24:02d}:{random.choice(['00', '15', '30', '45'])}",
-                "duration": f"{dur_hours}h{random.choice(['00', '15', '30', '45'])}m",
-                "price": base_price + random.randint(-200, 500),
-                "class": "经济舱",
-                "seats_left": random.randint(2, 50),
-            })
 
     result = {
         "route": f"{origin} → {destination}",
         "date": date or "待定",
+        "source": source,
         "flights": flights,
         "cheapest": min(flights, key=lambda x: x["price"]) if flights else None,
-        "recommendation": "建议提前14-21天预订以获得最佳价格",
+        "recommendation": (
+            "建议提前14-21天预订以获得最佳价格"
+            if flights else "未接入该路线实时航班数据，请查询航司/票务平台后再确认"
+        ),
+        "note": "sample 仅为内置示例数据；unavailable 表示没有可用真实班次，不能当作事实引用。",
     }
     return json.dumps(result, ensure_ascii=False, indent=2)
 
@@ -304,36 +294,27 @@ def search_trains(origin: str, destination: str, date: str = "") -> str:
     key = (origin, destination)
     reverse_key = _reverse_key(key)
 
+    source = "sample"
     if key in SAMPLE_TRAINS:
         trains = SAMPLE_TRAINS[key]
     elif reverse_key in SAMPLE_TRAINS:
+        source = "sample_reverse"
         trains = _reverse_trains(SAMPLE_TRAINS[reverse_key], reverse_key)
     else:
-        # 生成通用火车数据
-        train_types = [("G", "高铁"), ("D", "动车"), ("K", "快速")]
+        source = "unavailable"
         trains = []
-        for prefix, ttype in random.sample(train_types, min(3, len(train_types))):
-            dep_hour = random.randint(6, 20)
-            dur_minutes = random.randint(30, 600)
-            h, m = divmod(dur_minutes, 60)
-            price_base = dur_minutes * (3 if prefix == "G" else 2 if prefix == "D" else 1)
-            trains.append({
-                "train": f"{prefix}{random.randint(1, 999)}",
-                "type": ttype,
-                "departure": f"{dep_hour:02d}:{random.choice(['00', '30'])}",
-                "arrival": f"{(dep_hour + h) % 24:02d}:{m:02d}",
-                "duration": f"{h}h{m}m" if h > 0 else f"{m}m",
-                "price_二等座": price_base,
-                "price_一等座": int(price_base * 1.6),
-                "seats_left": random.randint(50, 500),
-            })
 
     result = {
         "route": f"{origin} → {destination}",
         "date": date or "待定",
+        "source": source,
         "trains": trains,
         "cheapest": min(trains, key=lambda x: x.get("price_二等座", x.get("price_硬座", 999))) if trains else None,
-        "tip": "高铁比飞机更准时，3小时以内高铁优于飞机（算上机场时间）",
+        "tip": (
+            "高铁比飞机更准时，3小时以内高铁优于飞机（算上机场时间）"
+            if trains else "未接入该路线实时铁路数据，请查询 12306/客运站后再确认"
+        ),
+        "note": "sample 仅为内置示例数据；unavailable 表示没有可用真实班次，不能当作事实引用。",
     }
     return json.dumps(result, ensure_ascii=False, indent=2)
 
@@ -357,7 +338,9 @@ def compare_transport(origin: str, destination: str, date: str = "") -> str:
     flight_price = cheapest_flight.get("price", float("inf")) if cheapest_flight else float("inf")
     train_price = cheapest_train.get("price_二等座", cheapest_train.get("price_硬座", float("inf"))) if cheapest_train else float("inf")
 
-    if train_price < flight_price * 0.6:
+    if flight_price == float("inf") and train_price == float("inf"):
+        recommendation = "未查到可核实的公共交通班次，请改用官方票务平台或补充更具体站点后查询"
+    elif train_price < flight_price * 0.6:
         recommendation = "🚄 推荐火车：价格优势明显，性价比更高"
     elif flight_price < train_price:
         recommendation = "✈️ 推荐飞机：价格更低或接近，节省时间"

@@ -18,6 +18,7 @@ export interface AgentStep {
   message?: string
   elapsed?: number
   completed?: string[]
+  update?: any
   state?: any
   awaiting_review?: boolean
 }
@@ -48,6 +49,7 @@ export async function submitPlan(request: TravelPlanRequest): Promise<any> {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(request),
   })
+  if (!resp.ok) throw new Error(`请求失败：HTTP ${resp.status}`)
   return resp.json()
 }
 
@@ -67,9 +69,16 @@ export function streamPlan(
         body: JSON.stringify(request),
         signal: controller.signal,
       })
+      if (!resp.ok) {
+        onError(`规划请求失败：HTTP ${resp.status}`)
+        return
+      }
 
       const reader = resp.body?.getReader()
-      if (!reader) return
+      if (!reader) {
+        onError('规划请求没有返回流式内容')
+        return
+      }
       const decoder = new TextDecoder()
       let buffer = ''
 
@@ -127,9 +136,16 @@ export function streamResume(
         body: JSON.stringify(request),
         signal: controller.signal,
       })
+      if (!resp.ok) {
+        onError(`确认请求失败：HTTP ${resp.status}`)
+        return
+      }
 
       const reader = resp.body?.getReader()
-      if (!reader) return
+      if (!reader) {
+        onError('确认请求没有返回流式内容')
+        return
+      }
       const decoder = new TextDecoder()
       let buffer = ''
       let heartbeatCount = 0
@@ -169,16 +185,19 @@ export function streamResume(
 
 export async function fetchSkills(): Promise<SkillMeta[]> {
   const resp = await fetch('/api/skills')
+  if (!resp.ok) throw new Error(`请求失败：HTTP ${resp.status}`)
   return resp.json()
 }
 
 export async function toggleSkill(name: string): Promise<{ name: string; enabled: boolean }> {
   const resp = await fetch(`/api/skills/${name}/toggle`, { method: 'POST' })
+  if (!resp.ok) throw new Error(`请求失败：HTTP ${resp.status}`)
   return resp.json()
 }
 
 export async function fetchMetrics(): Promise<TaskMetrics[]> {
   const resp = await fetch('/api/metrics')
+  if (!resp.ok) throw new Error(`请求失败：HTTP ${resp.status}`)
   return resp.json()
 }
 
@@ -188,6 +207,7 @@ export async function generateReport(sessionId: string): Promise<any> {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ session_id: sessionId }),
   })
+  if (!resp.ok) throw new Error(`请求失败：HTTP ${resp.status}`)
   return resp.json()
 }
 
@@ -197,10 +217,12 @@ export async function fetchRouteData(sessionId: string): Promise<any> {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ session_id: sessionId }),
   })
+  if (!resp.ok) throw new Error(`请求失败：HTTP ${resp.status}`)
   return resp.json()
 }
 
 export async function validateSession(sessionId: string): Promise<{ valid: boolean; reason?: string; awaiting_review?: boolean }> {
   const resp = await fetch(`/api/session/${sessionId}/validate`)
+  if (!resp.ok) throw new Error(`请求失败：HTTP ${resp.status}`)
   return resp.json()
 }

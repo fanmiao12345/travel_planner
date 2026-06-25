@@ -1,7 +1,11 @@
-"""旅行报告 HTML 生成器"""
+"""旅行报告生成器"""
 
 from __future__ import annotations
 from datetime import datetime
+from io import BytesIO
+from xml.sax.saxutils import escape
+import re
+import zipfile
 
 
 def generate_report_html(state: dict) -> str:
@@ -289,3 +293,150 @@ def generate_report_html(state: dict) -> str:
 </html>"""
 
     return html
+
+
+def generate_report_docx(state: dict) -> bytes:
+    """从 final_state 生成 Word docx 文档。"""
+
+    destination = state.get("destination", "未指定")
+    origin = state.get("origin", "未指定")
+    dates = state.get("dates", {}) or {}
+    evidence = state.get("evidence_sources", []) or []
+    quality = state.get("quality_report", {}) or {}
+
+    def _content(val):
+        if isinstance(val, dict):
+            return val.get("content", "")
+        if isinstance(val, list):
+            return "\n\n".join(str(v) for v in val if v)
+        return str(val) if val else ""
+
+    def _clean_markdown(text: str) -> list[str]:
+        text = str(text or "").replace("\r\n", "\n")
+        lines: list[str] = []
+        for raw in text.split("\n"):
+            line = raw.strip()
+            if not line:
+                lines.append("")
+                continue
+            line = re.sub(r"^#{1,6}\s*", "", line)
+            line = re.sub(r"^\s*[-*]\s+", "• ", line)
+            line = re.sub(r"^\s*\d+\.\s+", lambda m: m.group(0), line)
+            line = re.sub(r"\*\*(.+?)\*\*", r"\1", line)
+            line = re.sub(r"`(.+?)`", r"\1", line)
+            lines.append(line)
+        return lines
+
+    def _p(text: str = "", style: str | None = None) -> str:
+        style_xml = f'<w:pPr><w:pStyle w:val="{style}"/></w:pPr>' if style else ""
+        preserve = ' xml:space="preserve"' if text.startswith(" ") or text.endswith(" ") else ""
+        return f"<w:p>{style_xml}<w:r><w:t{preserve}>{escape(text)}</w:t></w:r></w:p>"
+
+    paragraphs: list[str] = []
+    paragraphs.append(_p("旅行计划报告", "Title"))
+    paragraphs.append(_p(f"{origin} → {destination}", "Subtitle"))
+    paragraphs.append(_p(f"生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M')}"))
+    paragraphs.append(_p(""))
+
+    meta = [
+        f"出发地：{origin}",
+        f"目的地：{destination}",
+        f"日期：{dates.get('start', '未定')} ~ {dates.get('end', '未定')}",
+        f"天数：{dates.get('days', '?')} 天",
+        f"预算：¥{state.get('budget', '未指定')}",
+        f"人数：{state.get('people_count', 1)} 人",
+        f"风格：{state.get('travel_style', '经典')}",
+        f"质量评分：{quality.get('score', 'N/A')}",
+    ]
+    paragraphs.append(_p("基础信息", "Heading1"))
+    for item in meta:
+        paragraphs.append(_p(item))
+
+    sections = [
+        ("完整行程方案", _content(state.get("final_plan"))),
+        ("路线规划", _content(state.get("route_plan"))),
+        ("天气预报", _content(state.get("weather_info"))),
+        ("交通方案", _content(state.get("transport_options"))),
+        ("住宿推荐", _content(state.get("accommodation_options"))),
+        ("美食推荐", _content(state.get("food_recommendations"))),
+        ("预算明细", _content(state.get("budget_breakdown"))),
+    ]
+    for title, content in sections:
+        if not content:
+            continue
+        paragraphs.append(_p(""))
+        paragraphs.append(_p(title, "Heading1"))
+        for line in _clean_markdown(content):
+            paragraphs.append(_p(line))
+
+    paragraphs.append(_p(""))
+    paragraphs.append(_p("数据来源", "Heading1"))
+    if evidence:
+        for item in evidence:
+            if not isinstance(item, dict):
+                continue
+            source_id = item.get("id", "")
+            title = item.get("title") or item.get("category") or "来源"
+            source_type = item.get("source_type") or item.get("source") or ""
+            url = item.get("url") or ""
+            official = "官方/权威来源" if item.get("is_official") else "普通搜索来源，需二次确认"
+            paragraphs.append(_p(f"{source_id} {title} | {source_type} | {official}"))
+            if url:
+                paragraphs.append(_p(f"链接：{url}"))
+            if item.get("snippet"):
+                paragraphs.append(_p(f"摘要：{item.get('snippet')}"))
+    else:
+        paragraphs.append(_p("暂无工具返回的可引用来源，所有事实性信息请出行前二次确认。"))
+
+    warnings = quality.get("warnings") or []
+    if warnings:
+        paragraphs.append(_p(""))
+        paragraphs.append(_p("质量检查提醒", "Heading1"))
+        for warning in warnings:
+            paragraphs.append(_p(f"• {warning}"))
+
+    document_xml = f'''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    {"".join(paragraphs)}
+    <w:sectPr>
+      <w:pgSz w:w="11906" w:h="16838"/>
+      <w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/>
+    </w:sectPr>
+  </w:body>
+</w:document>'''
+
+    styles_xml = '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style>
+  <w:style w:type="paragraph" w:styleId="Title"><w:name w:val="Title"/><w:basedOn w:val="Normal"/><w:rPr><w:b/><w:sz w:val="40"/></w:rPr></w:style>
+  <w:style w:type="paragraph" w:styleId="Subtitle"><w:name w:val="Subtitle"/><w:basedOn w:val="Normal"/><w:rPr><w:sz w:val="24"/><w:color w:val="666666"/></w:rPr></w:style>
+  <w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:basedOn w:val="Normal"/><w:rPr><w:b/><w:sz w:val="28"/></w:rPr></w:style>
+</w:styles>'''
+
+    content_types = '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+  <Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>
+</Types>'''
+
+    rels = '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
+</Relationships>'''
+
+    doc_rels = '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rIdStyles" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
+</Relationships>'''
+
+    buffer = BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as docx:
+        docx.writestr("[Content_Types].xml", content_types)
+        docx.writestr("_rels/.rels", rels)
+        docx.writestr("word/document.xml", document_xml)
+        docx.writestr("word/styles.xml", styles_xml)
+        docx.writestr("word/_rels/document.xml.rels", doc_rels)
+    return buffer.getvalue()

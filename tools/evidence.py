@@ -15,6 +15,7 @@ from typing import Any
 
 URL_RE = re.compile(r"https?://[^\s\"'<>，。；、)）]+")
 ACTIVITY_WORDS = ("活动", "节庆", "赛事", "展会", "演唱会", "音乐节", "庙会", "马拉松", "比赛")
+OFFICIAL_HINTS = ("gov.cn", ".gov", "官网", "官方", "文旅", "文化和旅游", "主办方", "票务", "公告")
 
 
 def _safe_json(value: Any) -> Any:
@@ -36,6 +37,12 @@ def _short(text: Any, limit: int = 220) -> str:
     """Return compact single-line text for evidence snippets."""
     value = str(text or "").replace("\n", " ").strip()
     return value[:limit] + ("..." if len(value) > limit else "")
+
+
+def is_official_source(url: str = "", title: str = "", snippet: str = "") -> bool:
+    """Heuristic official-source detector used for evidence quality checks."""
+    text = f"{url} {title} {snippet}".lower()
+    return any(hint.lower() in text for hint in OFFICIAL_HINTS)
 
 
 def _source_type(source: str, tool_name: str) -> str:
@@ -77,6 +84,7 @@ def _append_web_items(
             "url": url,
             "snippet": _short(snippet),
             "date_candidates": item.get("date_candidates", []),
+            "is_official": bool(item.get("is_official")) or is_official_source(url, title, snippet),
         })
 
 
@@ -240,6 +248,7 @@ def build_quality_report(state: dict[str, Any]) -> dict[str, Any]:
 
     checks = {
         "has_web_sources": bool([item for item in sources if item.get("url")]),
+        "has_official_sources": bool([item for item in sources if item.get("is_official")]),
         "has_route_api": "route_api" in source_types,
         "has_weather_api": "weather_api" in source_types,
         "has_route_plan": bool(state.get("route_plan")),
@@ -256,6 +265,8 @@ def build_quality_report(state: dict[str, Any]) -> dict[str, Any]:
     warnings = []
     if not checks["has_web_sources"]:
         warnings.append("没有可引用的网页来源，景点、活动、餐饮和住宿建议需要出行前二次确认。")
+    if not checks["has_official_sources"]:
+        warnings.append("未看到官网/官方公告/主办方/权威票务来源，活动时间、开放规则和票务信息必须二次确认。")
     if "自驾" in request or "开车" in request:
         if not checks["has_route_api"]:
             warnings.append("用户要求自驾，但未看到地图路线 API 证据。")

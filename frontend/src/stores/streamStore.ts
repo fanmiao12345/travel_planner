@@ -162,6 +162,10 @@ class StreamStore {
   }
 
   private handleStep(step: AgentStep) {
+    const finalPlan =
+      step.update?.final_plan?.content ||
+      step.state?.final_plan?.content
+
     if (step.type === 'session' && (step as any).session_id) {
       console.log('[StreamStore] Received session_id:', (step as any).session_id)
       this.state.sessionId = (step as any).session_id
@@ -179,8 +183,14 @@ class StreamStore {
     if (step.completed) {
       this.state.completed = step.completed
     }
+    if (finalPlan) {
+      this.state.planContent = finalPlan
+    }
     if (step.message) {
-      if (step.type === 'token') {
+      if (finalPlan && (step.type === 'node_complete' || step.type === 'interrupt')) {
+        // 最终方案正文已经从 state/update 取到了，这类节点消息只作为进度，
+        // 不再追加到用户要审阅的方案里。
+      } else if (step.type === 'token') {
         this.state.planContent += step.message
       } else if (step.type === 'tool_call') {
         this.state.planContent += (this.state.planContent ? '\n' : '') + step.message

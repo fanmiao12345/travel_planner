@@ -90,13 +90,18 @@ export default function Chat() {
   const handleSend = () => {
     const text = input.trim()
     if (!text || isPlanning) return
+    const activeSessionId = streamStore.getState().sessionId || sessionId
     setInput('')
     setMessages((prev) => [...prev, { role: 'user', content: text }])
     isAtBottomRef.current = true
 
     if (awaitingReview) {
+      if (!activeSessionId) {
+        setMessages((prev) => [...prev, { role: 'assistant', content: '❌ 会话已丢失，请重新提交出游需求。' }])
+        return
+      }
       streamStore.startResume(
-        sessionId!,
+        activeSessionId,
         text,
         handleStep,
         handleDone,
@@ -118,8 +123,10 @@ export default function Chat() {
   }
 
   const handleDone = () => {
-    console.log('[Chat] handleDone called, sessionId:', sessionId)
-    const content = streamStore.getState().planContent
+    const latestState = streamStore.getState()
+    const activeSessionId = latestState.sessionId || sessionId
+    console.log('[Chat] handleDone called, sessionId:', activeSessionId)
+    const content = latestState.planContent
     if (pendingConfirmRef.current) {
       pendingConfirmRef.current = false
       setMessages((prev) => [...prev, { role: 'assistant', content: '✅ 方案已确认。' }])
@@ -129,7 +136,7 @@ export default function Chat() {
     // 清除 store 中的 planContent
     streamStore.finishPlan('')
     console.log('[Chat] After finishPlan, sessionId:', streamStore.getState().sessionId)
-    if (sessionId) {
+    if (activeSessionId) {
       setShowReport(true)
     }
   }
@@ -155,21 +162,23 @@ export default function Chat() {
   }
 
   const handleReviewAction = (action: string) => {
-    console.log('[Chat] handleReviewAction:', action, 'sessionId:', sessionId)
+    const activeSessionId = streamStore.getState().sessionId || sessionId
+    console.log('[Chat] handleReviewAction:', action, 'sessionId:', activeSessionId)
     const userMsg = action === 'confirm' ? '确认方案' : '重新规划'
     setMessages((prev) => [...prev, { role: 'user', content: userMsg }])
     isAtBottomRef.current = true
 
+    if (!activeSessionId) {
+      console.error('[Chat] sessionId is null!')
+      setMessages((prev) => [...prev, { role: 'assistant', content: '❌ 会话已丢失，请重新提交出游需求。' }])
+      return
+    }
+
     if (action === 'confirm') {
-      if (!sessionId) {
-        console.error('[Chat] sessionId is null!')
-        setMessages((prev) => [...prev, { role: 'assistant', content: '❌ 会话已丢失，请重新提交出游需求。' }])
-        return
-      }
       pendingConfirmRef.current = true
       setShowReport(false)
       streamStore.startResume(
-        sessionId,
+        activeSessionId,
         '确认方案',
         handleStep,
         handleDone,
@@ -177,6 +186,13 @@ export default function Chat() {
       )
     } else {
       setShowReport(false)
+      streamStore.startResume(
+        activeSessionId,
+        '重新规划',
+        handleStep,
+        handleDone,
+        handleError,
+      )
     }
   }
 

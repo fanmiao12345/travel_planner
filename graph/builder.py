@@ -82,10 +82,12 @@ def _make_agent_node(agent, output_key: str, phase_msg: str):
     _dict_keys = {"route_plan", "weather_info", "budget_breakdown", "final_plan", "dates"}
 
     async def agent_node(state: TravelState) -> dict:
+        import asyncio as _asyncio
+
         # 从状态中提取相关上下文
-        # 这里的 context 是每个专业 Agent 都能看到的“任务 brief”。
+        # 这里的 context 是每个专业 Agent 都能看到的”任务 brief”。
         # 专业 Agent 自己再根据 prompt 决定要调用哪些工具。
-        context = f"""当前任务信息：
+        context = f”””当前任务信息：
 出发地: {state.get('origin', '未指定')}
 目的地: {state.get('destination', '未指定')}
 出发日期: {state.get('dates', {}).get('start', '未指定')}
@@ -96,12 +98,21 @@ def _make_agent_node(agent, output_key: str, phase_msg: str):
 风格: {state.get('travel_style', '经典')}
 请只使用上述日期或工具返回的日期，不要自行编造当前时间。
 内部执行方式: ReAct/tool-calling。先判断需要哪些工具，再读取工具结果，最后生成面向用户的答案；不要输出隐藏推理链，只输出可验证的依据和结论。
-"""
+“””
 
-        # 调用 Agent
-        result = await agent.ainvoke({
-            "messages": [("system", context), ("user", state.get("user_request", "请帮我规划出游"))]
-        })
+        # 调用 Agent（120 秒超时，避免单个 Agent 卡住整个流程）
+        try:
+            result = await _asyncio.wait_for(agent.ainvoke({
+                “messages”: [(“system”, context), (“user”, state.get(“user_request”, “请帮我规划出游”))]
+            }), timeout=120)
+        except _asyncio.TimeoutError:
+            output = f”⏰ {phase_msg}超时（120秒），已跳过。请稍后重试或简化需求。”
+            if output_key in _dict_keys:
+                return {output_key: {“content”: output, “react_trace”: “Timeout”}, “messages”: [SystemMessage(content=output)]}
+            elif output_key in _list_keys:
+                return {output_key: [output], “messages”: [SystemMessage(content=output)]}
+            else:
+                return {output_key: output, “messages”: [SystemMessage(content=output)]}
         react_trace = _format_react_trace(result.get("messages", []))
         evidence_sources = collect_evidence_from_messages(result.get("messages", []), agent_name=output_key)
 

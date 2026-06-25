@@ -25,12 +25,19 @@ export default function ReportButton({ sessionId, onClose, onSessionExpired }: P
         setError(data.error)
         return
       }
-      // 下载 HTML 文件
-      const blob = new Blob([data.html], { type: 'text/html;charset=utf-8' })
+      // 下载 Word 文档
+      const binary = atob(data.content_base64)
+      const bytes = new Uint8Array(binary.length)
+      for (let i = 0; i < binary.length; i += 1) {
+        bytes[i] = binary.charCodeAt(i)
+      }
+      const blob = new Blob([bytes], {
+        type: data.mime_type || 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      })
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = `旅行计划报告_${new Date().toISOString().slice(0, 10)}.html`
+      a.download = data.filename || `旅行计划报告_${new Date().toISOString().slice(0, 10)}.docx`
       document.body.appendChild(a)
       a.click()
       document.body.removeChild(a)
