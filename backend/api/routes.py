@@ -161,8 +161,6 @@ async def plan_travel_stream(request: Request):
                         "node": event.node_name,
                         "message": msg,
                         "completed": event.completed_nodes,
-                        "update": event.update,
-                        "state": event.final_state,
                     })
                     continue
                 elif event.event_type == "tool_call":
@@ -173,8 +171,6 @@ async def plan_travel_stream(request: Request):
                         "node": event.node_name,
                         "message": msg,
                         "completed": event.completed_nodes,
-                        "update": event.update,
-                        "state": event.final_state,
                     })
                     continue
 
@@ -184,8 +180,6 @@ async def plan_travel_stream(request: Request):
                     "message": msg,
                     "elapsed": event.elapsed,
                     "completed": event.completed_nodes,
-                    "update": event.update,
-                    "state": event.final_state,
                 })
 
             # 保存 final_state 到应用级 session，供报告/地图/后续恢复使用。
