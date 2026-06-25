@@ -213,7 +213,7 @@ async def resume_travel(request: Request):
     session = request.app.state.session_manager.get(session_id)
 
     # 会话不存在（后端重启后内存丢失）
-    if not session or not session.travel_state:
+    if not session:
         return {"error": "SESSION_EXPIRED", "message": "会话已过期，请重新提交旅行需求"}
 
     previous_state = dict(session.travel_state or {})
@@ -251,7 +251,7 @@ async def resume_travel_stream(request: Request):
     session = sm.get(session_id)
 
     # 会话不存在（后端重启后内存丢失），返回明确错误
-    if not session or not session.travel_state:
+    if not session:
         async def event_generator():
             yield f'data: {{"type": "_error", "message": "SESSION_EXPIRED"}}\n\n'
         return StreamingResponse(event_generator(), media_type="text/event-stream")
@@ -326,7 +326,7 @@ async def validate_session(session_id: str, request: Request):
     """验证会话是否仍然有效（用于前端检测后端重启）。"""
     sm = request.app.state.session_manager
     session = sm.get(session_id)
-    if not session or not session.travel_state:
+    if not session:
         return {"valid": False, "reason": "session_not_found"}
     return {"valid": True, "awaiting_review": session.awaiting_review}
 
